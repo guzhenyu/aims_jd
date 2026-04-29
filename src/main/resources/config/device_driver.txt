@@ -1,0 +1,83 @@
+config {
+    driver_code: "JY_monitor_mindray_n"  # 迈瑞 N12 监护仪
+    hl7_ob_path_prefix: "OBX"
+    hl7_ob_code_path: "3-2"
+    hl7_ob_value_path: "5"
+    hl7_ob_value_at_path: "OBR-7"
+    item {
+        ob_code: "MDC_PRESS_BLD_NONINV_SYS"
+        monitoring_param_code: "nibp_s"
+    }
+    item {
+        ob_code: "MDC_PRESS_BLD_NONINV_DIA"
+        monitoring_param_code: "nibp_d"
+    }
+    item {
+        ob_code: "MDC_ECG_HEART_RATE"
+        monitoring_param_code: "hr"
+    }
+    item {
+        ob_code: "MDC_PULS_OXIM_SAT_O2"
+        monitoring_param_code: "Spo2"
+    }
+    item {
+        ob_code: "MDC_TTHOR_RESP_RATE"
+        monitoring_param_code: "respiratory_rate"
+    }
+    item {
+        ob_code: "MDC_TEMP"
+        monitoring_param_code: "temperature"
+    }
+    item {
+        ob_code: "MDC_PRESS_BLD_VEN_CENT_MEAN"
+        monitoring_param_code: "cvp"
+    }
+}
+
+config {
+    driver_code: "JY_monitor_blt_q5"  # 宝莱特 Q5 监护仪
+    hl7_ob_path_prefix: "OBX"
+    hl7_ob_code_path: "4-2"
+    hl7_ob_value_path: "5"
+    hl7_ob_value_at_path: "14"
+    item {
+        ob_code: "NIBPs"
+        monitoring_param_code: "nibp_s"
+    }
+    item {
+        ob_code: "NIBPd"
+        monitoring_param_code: "nibp_d"
+    }
+    item {
+        ob_code: "HR"
+        monitoring_param_code: "hr"
+    }
+    item {
+        ob_code: "SpO2"
+        monitoring_param_code: "Spo2"
+    }
+}
+
+config {
+    driver_code: "JY_anesthesia_mindray_wato_ex55"  # 迈瑞 WATO EX35/EX55 麻醉机
+    hl7_ob_path_prefix: "OBX"
+    hl7_ob_code_path: "3-2"
+    hl7_ob_value_path: "5"
+    hl7_ob_value_at_path: "OBR-7"
+    item {
+        ob_code: "MDC_VENT_RESP_RATE_SETTING"
+        monitoring_param_code: "respiratory_rate_ctrl"
+    }
+    item {
+        ob_code: "MDC_VOL_AWAY_TIDAL_SETTING"
+        monitoring_param_code: "anes_vt"
+    }
+    item {
+        ob_code: "MDC_VENT_PRESS_MAX"
+        monitoring_param_code: "anes_ppeak"
+    }
+    item {
+        ob_code: "MDC_AWAY_CO2_ET"
+        monitoring_param_code: "anes_etco2"
+    }
+}
