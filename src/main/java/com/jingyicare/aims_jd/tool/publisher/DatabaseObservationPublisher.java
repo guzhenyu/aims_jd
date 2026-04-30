@@ -32,7 +32,11 @@ public class DatabaseObservationPublisher implements ObservationPublisher {
 
     @Override
     public void publishDeviceData(ObservationBatch batch) {
-        if (batch == null || batch.isEmpty()) {
+        if (batch == null) {
+            return;
+        }
+        if (batch.isEmpty()) {
+            logReceivedAndDeviceData(batch, "[]");
             return;
         }
 
@@ -40,6 +44,8 @@ public class DatabaseObservationPublisher implements ObservationPublisher {
         if (deptId <= 0 || batch.deviceId() <= 0) {
             log.warn("Skip device data with invalid device/dept: deviceId={} deptId={}",
                 batch.deviceId(), deptId);
+            logReceivedAndDeviceData(batch,
+                "skipped_invalid_device_or_dept {device_id=" + batch.deviceId() + ", dept_id=" + deptId + "}");
             return;
         }
 
@@ -51,6 +57,7 @@ public class DatabaseObservationPublisher implements ObservationPublisher {
             );
         }
         if (rows.isEmpty()) {
+            logReceivedAndDeviceData(batch, "[]");
             return;
         }
 
@@ -68,10 +75,11 @@ public class DatabaseObservationPublisher implements ObservationPublisher {
             """.formatted(dataSchema, dataSchema);
 
         int inserted = 0;
+        List<RowInsertResult> rowResults = new ArrayList<>();
         for (Row row : rows) {
             LocalDateTime nextMinute = row.recordedAt().plusMinutes(1);
             try {
-                inserted += jdbcTemplate.update(
+                int affected = jdbcTemplate.update(
                     insertSql,
                     row.deptId(),
                     row.deviceId(),
@@ -83,11 +91,19 @@ public class DatabaseObservationPublisher implements ObservationPublisher {
                     Timestamp.valueOf(row.recordedAt()),
                     Timestamp.valueOf(nextMinute)
                 );
+                inserted += affected;
+                rowResults.add(new RowInsertResult(
+                    row,
+                    affected > 0 ? "inserted" : "skipped_duplicate"
+                ));
             } catch (Exception e) {
+                rowResults.add(new RowInsertResult(row, "error"));
                 log.error("Failed to insert device data: deviceId={} paramCode={} recordedStr={} err={}",
                     row.deviceId(), row.paramCode(), row.recordedStr(), e.toString(), e);
             }
         }
+
+        logReceivedAndDeviceData(batch, formatRowResults(rowResults));
 
         if (inserted > 0) {
             Row first = rows.get(0);
@@ -145,6 +161,64 @@ public class DatabaseObservationPublisher implements ObservationPublisher {
         return value == null || value.isBlank();
     }
 
+    private void logReceivedAndDeviceData(ObservationBatch batch, String deviceDataText) {
+        log.info("received data(filtered / unfiltered):\nfiltered:\n{}\nunfiltered:\n{}\ndevice_data:\n{}",
+            formatObservationValues(batch.values()),
+            formatRawMessage(batch.rawMessage()),
+            deviceDataText == null || deviceDataText.isBlank() ? "[]" : deviceDataText);
+    }
+
+    private static String formatObservationValues(List<ObservationValue> values) {
+        if (values == null || values.isEmpty()) {
+            return "[]";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (ObservationValue value : values) {
+            if (!builder.isEmpty()) {
+                builder.append('\n');
+            }
+            builder.append("{param_code=").append(blankToDash(value.paramCode()))
+                .append(", recorded_str=").append(blankToDash(value.recordedStr()))
+                .append(", recorded_at=").append(blankToDash(value.recordedAtIso8601()))
+                .append('}');
+        }
+        return builder.toString();
+    }
+
+    private static String formatRawMessage(String rawMessage) {
+        if (rawMessage == null || rawMessage.isBlank()) {
+            return "[]";
+        }
+        return rawMessage
+            .replace("\r\n", "\n")
+            .replace('\r', '\n');
+    }
+
+    private static String formatRowResults(List<RowInsertResult> results) {
+        if (results == null || results.isEmpty()) {
+            return "[]";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (RowInsertResult result : results) {
+            Row row = result.row();
+            if (!builder.isEmpty()) {
+                builder.append('\n');
+            }
+            builder.append("{dept_id=").append(row.deptId())
+                .append(", device_id=").append(row.deviceId())
+                .append(", param_code=").append(blankToDash(row.paramCode()))
+                .append(", recorded_at=").append(row.recordedAt())
+                .append(", recorded_str=").append(blankToDash(row.recordedStr()))
+                .append(", status=").append(blankToDash(result.status()))
+                .append('}');
+        }
+        return builder.toString();
+    }
+
+    private static String blankToDash(String value) {
+        return value == null || value.isBlank() ? "-" : value.trim();
+    }
+
     private final JdbcTemplate jdbcTemplate;
     private final String dataSchema;
 
@@ -154,6 +228,11 @@ public class DatabaseObservationPublisher implements ObservationPublisher {
         String paramCode,
         LocalDateTime recordedAt,
         String recordedStr
+    ) {}
+
+    private record RowInsertResult(
+        Row row,
+        String status
     ) {}
 }
 

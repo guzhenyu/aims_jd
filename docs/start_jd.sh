@@ -1,0 +1,1 @@
+java -jar ./aims_jd-0.0.1-SNAPSHOT.jar --spring.datasource.url=jdbc:postgresql://localhost:5432/jingyi_aims_db

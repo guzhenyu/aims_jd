@@ -125,6 +125,7 @@ public class OutboundDeviceManager {
             });
         }
         log.info("Reconciled {} outbound source devices", sessions.size());
+        logOutboundDeviceStatus(devices);
     }
 
     private boolean sameEndpointAndDriver(DeviceInfoPB oldDevice, DeviceInfoPB newDevice) {
@@ -145,6 +146,50 @@ public class OutboundDeviceManager {
         }
     }
 
+    private void logOutboundDeviceStatus(List<DeviceInfoPB> devices) {
+        StringBuilder builder = new StringBuilder("AIMS device_infos outbound status:");
+        int count = 0;
+        for (DeviceInfoPB device : devices) {
+            if (!DeviceSourceModes.isOutboundClient(device)) {
+                continue;
+            }
+            count++;
+            OutboundSession session = sessions.get(device.getId());
+            boolean connected = session != null && session.isConnected();
+            String reason = outboundDisconnectedReason(device, session);
+
+            builder.append('\n')
+                .append("id=").append(device.getId())
+                .append(" name=").append(blankToDash(device.getDeviceName()))
+                .append(" ip=").append(blankToDash(device.getDeviceIp()))
+                .append(" port=").append(blankToDash(device.getDevicePort()))
+                .append(" driverCode=").append(blankToDash(device.getDeviceDriverCode()))
+                .append(" sourceMode=").append(device.getSourceMode())
+                .append(" status=").append(connected ? "connected" : "disconnected");
+            if (!connected && !reason.isBlank()) {
+                builder.append(" reason=").append(reason);
+            }
+        }
+        if (count == 0) {
+            builder.append('\n').append("(empty)");
+        }
+        log.info("{}", builder);
+    }
+
+    private String outboundDisconnectedReason(DeviceInfoPB device, OutboundSession session) {
+        if (device.getDeviceIp().isBlank() || !isValidPort(device.getDevicePort())) {
+            return "invalid_endpoint";
+        }
+        if (session == null) {
+            return "session_not_started";
+        }
+        return "not_connected";
+    }
+
+    private static String blankToDash(String value) {
+        return value == null || value.isBlank() ? "-" : value.trim();
+    }
+
     private final class OutboundSession implements Runnable {
         private OutboundSession(DeviceInfoPB device) {
             this.device = device;
@@ -153,6 +198,14 @@ public class OutboundDeviceManager {
 
         DeviceInfoPB device() {
             return device;
+        }
+
+        boolean isConnected() {
+            Socket current = socket;
+            return running.get()
+                && current != null
+                && current.isConnected()
+                && !current.isClosed();
         }
 
         void start() {

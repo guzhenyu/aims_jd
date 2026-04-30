@@ -199,6 +199,8 @@ public class DeviceConnManager implements DriverDefinitionRepository {
                 }
             }
         }
+
+        logInboundDeviceStatus(devices, duplicateIps);
     }
 
     private void heartbeatDevices() {
@@ -319,6 +321,54 @@ public class DeviceConnManager implements DriverDefinitionRepository {
 
     private static String normalizeIp(String ip) {
         return ip == null ? "" : ip.trim();
+    }
+
+    private void logInboundDeviceStatus(List<DeviceInfoPB> devices, Set<String> duplicateIps) {
+        StringBuilder builder = new StringBuilder("AIMS device_infos inbound status:");
+        int count = 0;
+        for (DeviceInfoPB device : devices) {
+            if (!DeviceSourceModes.isInboundServer(device)) {
+                continue;
+            }
+            count++;
+            String ip = normalizeIp(device.getDeviceIp());
+            DeviceConnHandler handler = deviceConnHandlers.get(ip);
+            boolean connected = handler != null && handler.isAlive();
+            String reason = inboundDisconnectedReason(ip, duplicateIps);
+
+            builder.append('\n')
+                .append("id=").append(device.getId())
+                .append(" name=").append(blankToDash(device.getDeviceName()))
+                .append(" ip=").append(blankToDash(ip))
+                .append(" port=").append(blankToDash(device.getDevicePort()))
+                .append(" driverCode=").append(blankToDash(device.getDeviceDriverCode()))
+                .append(" sourceMode=").append(device.getSourceMode())
+                .append(" status=").append(connected ? "connected" : "disconnected");
+            if (!connected && !reason.isBlank()) {
+                builder.append(" reason=").append(reason);
+            }
+        }
+        if (count == 0) {
+            builder.append('\n').append("(empty)");
+        }
+        log.info("{}", builder);
+    }
+
+    private String inboundDisconnectedReason(String ip, Set<String> duplicateIps) {
+        if (ip.isBlank()) {
+            return "empty_ip";
+        }
+        if (duplicateIps.contains(ip)) {
+            return "duplicated_ip";
+        }
+        if (!sourceDevices.containsKey(ip)) {
+            return "not_collecting";
+        }
+        return "waiting_for_device";
+    }
+
+    private static String blankToDash(String value) {
+        return value == null || value.isBlank() ? "-" : value.trim();
     }
 
     private static void shutdownAndAwait(ExecutorService es, long timeout, TimeUnit unit) {
