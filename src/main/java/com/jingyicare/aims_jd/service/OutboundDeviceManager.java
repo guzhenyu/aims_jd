@@ -94,7 +94,7 @@ public class OutboundDeviceManager {
     }
 
     private void syncOutboundDevices() {
-        List<DeviceInfoPB> devices = deviceRepository.syncAndFindActiveDevices(deviceConnManager.supportedDriverCodes());
+        List<DeviceInfoPB> devices = deviceRepository.findActiveDevices(deviceConnManager.supportedDriverCodes());
         Map<Integer, DeviceInfoPB> desired = new HashMap<>();
         for (DeviceInfoPB device : devices) {
             if (!DeviceSourceModes.isOutboundClient(device)) {

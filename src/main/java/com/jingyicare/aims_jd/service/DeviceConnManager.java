@@ -156,7 +156,7 @@ public class DeviceConnManager implements DriverDefinitionRepository {
     }
 
     private void syncAimsDevices() {
-        List<DeviceInfoPB> devices = deviceRepository.syncAndFindActiveDevices(driverMap.keySet());
+        List<DeviceInfoPB> devices = deviceRepository.findActiveDevices(driverMap.keySet());
         Map<String, DeviceInfoPB> nextSources = new HashMap<>();
         int totalDevices = 0;
         int inboundSources = 0;

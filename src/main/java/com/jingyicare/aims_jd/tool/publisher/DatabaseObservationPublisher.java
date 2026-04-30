@@ -24,10 +24,10 @@ import com.jingyicare.aims_jd.utils.TimeUtils;
 public class DatabaseObservationPublisher implements ObservationPublisher {
     public DatabaseObservationPublisher(
         JdbcTemplate jdbcTemplate,
-        @Value("${aims.jd.schema:aims_jd}") String jdSchema
+        @Value("${aims.jd.schema:public}") String dataSchema
     ) {
         this.jdbcTemplate = jdbcTemplate;
-        this.jdSchema = sanitizeSchema(jdSchema);
+        this.dataSchema = sanitizeSchema(dataSchema);
     }
 
     @Override
@@ -65,7 +65,7 @@ public class DatabaseObservationPublisher implements ObservationPublisher {
                   AND recorded_at >= ?
                   AND recorded_at < ?
             )
-            """.formatted(jdSchema, jdSchema);
+            """.formatted(dataSchema, dataSchema);
 
         int inserted = 0;
         for (Row row : rows) {
@@ -134,7 +134,7 @@ public class DatabaseObservationPublisher implements ObservationPublisher {
     }
 
     private static String sanitizeSchema(String schema) {
-        String normalized = schema == null || schema.isBlank() ? "aims_jd" : schema.trim();
+        String normalized = schema == null || schema.isBlank() ? "public" : schema.trim();
         if (!normalized.matches("[A-Za-z_][A-Za-z0-9_]*")) {
             throw new IllegalArgumentException("Invalid PostgreSQL schema name: " + schema);
         }
@@ -146,7 +146,7 @@ public class DatabaseObservationPublisher implements ObservationPublisher {
     }
 
     private final JdbcTemplate jdbcTemplate;
-    private final String jdSchema;
+    private final String dataSchema;
 
     private record Row(
         int deptId,
