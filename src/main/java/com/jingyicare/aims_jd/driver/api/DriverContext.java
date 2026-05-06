@@ -19,11 +19,25 @@ public record DriverContext(
     Map<String, String> paramMap,
     List<DevObsPagePB> observationPages,
     Charset charset,
-    String zoneId
+    String zoneId,
+    Map<String, String> options
 ) {
+    public DriverContext(
+        String remoteIp,
+        DeviceInfoPB deviceInfo,
+        DevObservationConfigPB observationConfig,
+        Map<String, String> paramMap,
+        List<DevObsPagePB> observationPages,
+        Charset charset,
+        String zoneId
+    ) {
+        this(remoteIp, deviceInfo, observationConfig, paramMap, observationPages, charset, zoneId, Map.of());
+    }
+
     public DriverContext {
         paramMap = paramMap == null ? Map.of() : Map.copyOf(paramMap);
         observationPages = observationPages == null ? List.of() : List.copyOf(observationPages);
+        options = options == null ? Map.of() : Map.copyOf(options);
     }
 
     public int deviceId() {
@@ -52,6 +66,19 @@ public record DriverContext(
 
     public String driverCode() {
         return deviceInfo == null ? "" : deviceInfo.getDeviceDriverCode();
+    }
+
+    public String option(String key, String defaultValue) {
+        if (key == null || key.isBlank()) {
+            return defaultValue;
+        }
+        String value = options.get(key);
+        return value == null || value.isBlank() ? defaultValue : value.trim();
+    }
+
+    public boolean optionBoolean(String key, boolean defaultValue) {
+        String value = option(key, "");
+        return value.isBlank() ? defaultValue : Boolean.parseBoolean(value);
     }
 }
 

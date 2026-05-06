@@ -47,7 +47,14 @@ public class OutboundDeviceManager {
         @Value("${bltq5.heartbeat.interval_ms:1000}") int bltQ5HeartbeatIntervalMs,
         @Value("${bltq5.query.enabled:true}") boolean bltQ5QueryEnabled,
         @Value("${bltq5.query.interval_ms:1000}") int bltQ5QueryIntervalMs,
-        @Value("${bltq5.query.timestamp_suffix:true}") boolean bltQ5QueryTimestampSuffix
+        @Value("${bltq5.query.timestamp_suffix:true}") boolean bltQ5QueryTimestampSuffix,
+        @Value("${bltq5.query.once_per_connection:true}") boolean bltQ5QueryOncePerConnection,
+        @Value("${bltq5.query.delay_ms:200}") int bltQ5QueryDelayMs,
+        @Value("${bltq5.query.timestamp.zone_id:Asia/Shanghai}") String bltQ5QueryTimestampZoneId,
+        @Value("${bltq5.ack.enabled:false}") boolean bltQ5AckEnabled,
+        @Value("${bltq5.debug.enabled:true}") boolean bltQ5DebugEnabled,
+        @Value("${bltq5.debug.dump_bytes:true}") boolean bltQ5DebugDumpBytes,
+        @Value("${bltq5.debug.dump_max_bytes:512}") int bltQ5DebugDumpMaxBytes
     ) {
         this.deviceRepository = deviceRepository;
         this.deviceConnManager = deviceConnManager;
@@ -65,6 +72,13 @@ public class OutboundDeviceManager {
         this.bltQ5QueryEnabled = bltQ5QueryEnabled;
         this.bltQ5QueryIntervalMs = bltQ5QueryIntervalMs;
         this.bltQ5QueryTimestampSuffix = bltQ5QueryTimestampSuffix;
+        this.bltQ5QueryOncePerConnection = bltQ5QueryOncePerConnection;
+        this.bltQ5QueryDelayMs = Math.max(0, bltQ5QueryDelayMs);
+        this.bltQ5QueryTimestampZoneId = bltQ5QueryTimestampZoneId;
+        this.bltQ5AckEnabled = bltQ5AckEnabled;
+        this.bltQ5DebugEnabled = bltQ5DebugEnabled;
+        this.bltQ5DebugDumpBytes = bltQ5DebugDumpBytes;
+        this.bltQ5DebugDumpMaxBytes = Math.max(0, bltQ5DebugDumpMaxBytes);
         this.sessions = new ConcurrentHashMap<>();
         this.syncSched = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "AimsOutboundDeviceSyncThread");
@@ -190,6 +204,16 @@ public class OutboundDeviceManager {
         return value == null || value.isBlank() ? "-" : value.trim();
     }
 
+    private Map<String, String> driverOptions(DeviceInfoPB device) {
+        if (device == null || !BltQ5Monitor.DRIVER_CODE.equals(device.getDeviceDriverCode())) {
+            return Map.of();
+        }
+        Map<String, String> options = new HashMap<>();
+        options.put(BltQ5Monitor.OPTION_ACK_ENABLED, Boolean.toString(bltQ5AckEnabled));
+        options.put(BltQ5Monitor.OPTION_DIAGNOSTIC_ENABLED, Boolean.toString(bltQ5DebugEnabled));
+        return options;
+    }
+
     private final class OutboundSession implements Runnable {
         private OutboundSession(DeviceInfoPB device) {
             this.device = device;
@@ -231,9 +255,15 @@ public class OutboundDeviceManager {
                 try {
                     connectAndCollect();
                 } catch (Exception e) {
-                    log.warn("Outbound device session error: id={} endpoint={}:{} err={}",
-                        device.getId(), device.getDeviceIp(), device.getDevicePort(), e.toString());
+                    log.warn("Outbound device session error: id={} endpoint={}:{} local={} connectedMs={} bytesIn={} bytesOut={} lastReadAgeMs={} lastWriteAgeMs={} err={}",
+                        device.getId(), device.getDeviceIp(), device.getDevicePort(), localEndpoint,
+                        connectedDurationMs(), bytesIn, bytesOut, ageMs(lastReadAt), ageMs(lastWriteAt), e.toString(), e);
                 } finally {
+                    if (isBltQ5() && bltQ5DebugEnabled) {
+                        log.info("BLT Q5 TCP closing: id={} endpoint={}:{} local={} connectedMs={} bytesIn={} bytesOut={}",
+                            device.getId(), device.getDeviceIp(), device.getDevicePort(), localEndpoint,
+                            connectedDurationMs(), bytesIn, bytesOut);
+                    }
                     closeQuietly(socket);
                     socket = null;
                 }
@@ -250,11 +280,29 @@ public class OutboundDeviceManager {
                 throw new IllegalStateException("No driver implementation: " + device.getDeviceDriverCode());
             }
 
+            resetConnectionStats();
+            boolean q5 = isBltQ5();
+            int attempt = ++connectAttempt;
+            if (q5 && bltQ5DebugEnabled) {
+                log.info("BLT Q5 TCP connect attempt: id={} attempt={} endpoint={}:{} connectTimeoutMs={} readTimeoutMs={} heartbeatEnabled={} heartbeatMs={} queryEnabled={} queryOnce={} queryDelayMs={} queryIntervalMs={} queryTimestampSuffix={} queryTimestampZone={} ackEnabled={}",
+                    device.getId(), attempt, device.getDeviceIp(), device.getDevicePort(), connectTimeoutMs, readTimeoutMs,
+                    bltQ5HeartbeatEnabled, bltQ5HeartbeatIntervalMs, bltQ5QueryEnabled, bltQ5QueryOncePerConnection,
+                    bltQ5QueryDelayMs, bltQ5QueryIntervalMs, bltQ5QueryTimestampSuffix, bltQ5QueryTimestampZoneId,
+                    bltQ5AckEnabled);
+            }
+
             socket = new Socket();
             socket.connect(new InetSocketAddress(device.getDeviceIp(), Integer.parseInt(device.getDevicePort())), connectTimeoutMs);
             socket.setSoTimeout(readTimeoutMs);
+            connectedAt = System.currentTimeMillis();
+            localEndpoint = String.valueOf(socket.getLocalSocketAddress());
             log.info("Connected outbound AIMS device: id={} endpoint={}:{} driverCode={}",
                 device.getId(), device.getDeviceIp(), device.getDevicePort(), device.getDeviceDriverCode());
+            if (q5 && bltQ5DebugEnabled) {
+                log.info("BLT Q5 TCP connected: id={} attempt={} local={} remote={} keepAlive={} tcpNoDelay={} receiveBuffer={} sendBuffer={}",
+                    device.getId(), attempt, socket.getLocalSocketAddress(), socket.getRemoteSocketAddress(),
+                    socket.getKeepAlive(), socket.getTcpNoDelay(), socket.getReceiveBufferSize(), socket.getSendBufferSize());
+            }
 
             DriverContext driverContext = new DriverContext(
                 device.getDeviceIp(),
@@ -263,7 +311,8 @@ public class OutboundDeviceManager {
                 paramMap,
                 config.getObsPageList(),
                 Consts.CHARSET,
-                Consts.ZONE_ID
+                Consts.ZONE_ID,
+                driverOptions(device)
             );
             DriverPlugin plugin = factory.get().create(driverContext);
             RuntimeProtocolSessionContext sessionContext = new RuntimeProtocolSessionContext(driverContext);
@@ -278,17 +327,34 @@ public class OutboundDeviceManager {
             byte[] buffer = new byte[Consts.CHANNEL_READ_BUFFER_SIZE];
             long lastHeartbeatAt = 0;
             long lastQueryAt = 0;
+            boolean querySent = false;
+
+            if (q5) {
+                if (bltQ5HeartbeatEnabled) {
+                    writeCommand("HR01 heartbeat", buildBltQ5Heartbeat());
+                    lastHeartbeatAt = System.currentTimeMillis();
+                }
+                if (bltQ5QueryEnabled) {
+                    sleep(bltQ5QueryDelayMs);
+                    writeCommand("QY01/QCM2010 query", buildBltQ5Query());
+                    lastQueryAt = System.currentTimeMillis();
+                    querySent = true;
+                }
+            }
 
             while (running.get() && socket != null && !socket.isClosed()) {
                 long now = System.currentTimeMillis();
-                if (BltQ5Monitor.DRIVER_CODE.equals(device.getDeviceDriverCode())) {
+                if (q5) {
                     if (bltQ5HeartbeatEnabled && now - lastHeartbeatAt >= bltQ5HeartbeatIntervalMs) {
-                        writeCommand(buildBltQ5Heartbeat());
+                        writeCommand("HR01 heartbeat", buildBltQ5Heartbeat());
                         lastHeartbeatAt = now;
                     }
-                    if (bltQ5QueryEnabled && now - lastQueryAt >= bltQ5QueryIntervalMs) {
-                        writeCommand(buildBltQ5Query());
+                    if (bltQ5QueryEnabled
+                        && (!bltQ5QueryOncePerConnection || !querySent)
+                        && now - lastQueryAt >= bltQ5QueryIntervalMs) {
+                        writeCommand("QY01/QCM2010 query", buildBltQ5Query());
                         lastQueryAt = now;
+                        querySent = true;
                     }
                 }
                 runtime.onTick();
@@ -300,6 +366,13 @@ public class OutboundDeviceManager {
                     }
                     if (n > 0) {
                         byte[] chunk = Arrays.copyOf(buffer, n);
+                        bytesIn += n;
+                        lastReadAt = System.currentTimeMillis();
+                        if (q5 && bltQ5DebugEnabled) {
+                            log.info("BLT Q5 TCP <<< bytes={} totalIn={} id={} endpoint={}:{} local={}\n{}",
+                                n, bytesIn, device.getId(), device.getDeviceIp(), device.getDevicePort(),
+                                localEndpoint, formatBytes(chunk, n));
+                        }
                         sessionContext.touchHeartbeat();
                         runtime.onBytes(chunk);
                     }
@@ -324,7 +397,7 @@ public class OutboundDeviceManager {
                 return frame;
             }
             byte[] suffix = java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
-                .withZone(java.time.ZoneOffset.UTC)
+                .withZone(bltQ5QueryTimestampZone())
                 .format(java.time.Instant.now())
                 .getBytes(StandardCharsets.US_ASCII);
             byte[] combined = Arrays.copyOf(frame, frame.length + suffix.length);
@@ -342,13 +415,92 @@ public class OutboundDeviceManager {
             return frame;
         }
 
-        private void writeCommand(byte[] bytes) throws IOException {
+        private void writeCommand(String label, byte[] bytes) throws IOException {
             if (bytes == null || bytes.length == 0 || socket == null || socket.isClosed()) {
                 return;
             }
             OutputStream out = socket.getOutputStream();
             out.write(bytes);
             out.flush();
+            bytesOut += bytes.length;
+            lastWriteAt = System.currentTimeMillis();
+            if (isBltQ5() && bltQ5DebugEnabled) {
+                log.info("BLT Q5 TCP >>> {} bytes={} totalOut={} id={} endpoint={}:{} local={}\n{}",
+                    label, bytes.length, bytesOut, device.getId(), device.getDeviceIp(), device.getDevicePort(),
+                    localEndpoint, formatBytes(bytes, bytes.length));
+            }
+        }
+
+        private boolean isBltQ5() {
+            return BltQ5Monitor.DRIVER_CODE.equals(device.getDeviceDriverCode());
+        }
+
+        private void resetConnectionStats() {
+            connectedAt = 0;
+            bytesIn = 0;
+            bytesOut = 0;
+            lastReadAt = 0;
+            lastWriteAt = 0;
+            localEndpoint = "";
+        }
+
+        private long connectedDurationMs() {
+            return connectedAt <= 0 ? 0 : System.currentTimeMillis() - connectedAt;
+        }
+
+        private long ageMs(long timestampMs) {
+            return timestampMs <= 0 ? -1 : System.currentTimeMillis() - timestampMs;
+        }
+
+        private java.time.ZoneId bltQ5QueryTimestampZone() {
+            String zone = bltQ5QueryTimestampZoneId == null || bltQ5QueryTimestampZoneId.isBlank()
+                ? Consts.ZONE_ID
+                : bltQ5QueryTimestampZoneId.trim();
+            try {
+                return java.time.ZoneId.of(zone);
+            } catch (Exception e) {
+                log.warn("Invalid bltq5.query.timestamp.zone_id={}, fallback={}", zone, Consts.ZONE_ID);
+                return java.time.ZoneId.of(Consts.ZONE_ID);
+            }
+        }
+
+        private String formatBytes(byte[] data, int len) {
+            if (!bltQ5DebugDumpBytes) {
+                return "(byte dump disabled)";
+            }
+            if (data == null || len <= 0 || bltQ5DebugDumpMaxBytes <= 0) {
+                return "(empty)";
+            }
+            int dumpLen = Math.min(Math.min(data.length, len), bltQ5DebugDumpMaxBytes);
+            StringBuilder builder = new StringBuilder();
+            for (int off = 0; off < dumpLen; off += 16) {
+                StringBuilder hex = new StringBuilder();
+                StringBuilder ascii = new StringBuilder();
+                for (int i = 0; i < 16; i++) {
+                    int idx = off + i;
+                    if (idx < dumpLen) {
+                        int b = data[idx] & 0xff;
+                        hex.append(String.format(Locale.ROOT, "%02X ", b));
+                        ascii.append(b >= 32 && b <= 126 ? (char) b : '.');
+                    } else {
+                        hex.append("   ");
+                        ascii.append(' ');
+                    }
+                }
+                if (off > 0) {
+                    builder.append('\n');
+                }
+                builder.append(String.format(Locale.ROOT, "%04X  %-48s  %s", off, hex, ascii));
+            }
+            if (dumpLen < len) {
+                builder.append('\n')
+                    .append("... truncated, dumped ")
+                    .append(dumpLen)
+                    .append(" of ")
+                    .append(len)
+                    .append(" bytes");
+            }
+            return builder.toString();
         }
 
         private final class RuntimeProtocolSessionContext implements ProtocolSessionContext {
@@ -383,7 +535,7 @@ public class OutboundDeviceManager {
                         sleep(delayMs);
                     }
                     try {
-                        writeCommand(bytes);
+                        writeCommand("driver command", bytes);
                     } catch (IOException e) {
                         throw new IllegalStateException("Failed to write outbound command", e);
                     }
@@ -412,6 +564,13 @@ public class OutboundDeviceManager {
 
         private final DeviceInfoPB device;
         private final AtomicBoolean running;
+        private int connectAttempt;
+        private volatile String localEndpoint = "";
+        private volatile long connectedAt;
+        private volatile long bytesIn;
+        private volatile long bytesOut;
+        private volatile long lastReadAt;
+        private volatile long lastWriteAt;
         private volatile Thread thread;
         private volatile Socket socket;
     }
@@ -453,6 +612,13 @@ public class OutboundDeviceManager {
     private final boolean bltQ5QueryEnabled;
     private final int bltQ5QueryIntervalMs;
     private final boolean bltQ5QueryTimestampSuffix;
+    private final boolean bltQ5QueryOncePerConnection;
+    private final int bltQ5QueryDelayMs;
+    private final String bltQ5QueryTimestampZoneId;
+    private final boolean bltQ5AckEnabled;
+    private final boolean bltQ5DebugEnabled;
+    private final boolean bltQ5DebugDumpBytes;
+    private final int bltQ5DebugDumpMaxBytes;
     private final ConcurrentHashMap<Integer, OutboundSession> sessions;
     private final ScheduledExecutorService syncSched;
 }

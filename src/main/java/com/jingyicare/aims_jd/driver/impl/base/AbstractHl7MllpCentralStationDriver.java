@@ -67,6 +67,10 @@ public abstract class AbstractHl7MllpCentralStationDriver implements CentralStat
         return Optional.empty();
     }
 
+    protected boolean diagnosticLoggingEnabled() {
+        return false;
+    }
+
     protected long ackDelayMs() {
         return 5L;
     }
@@ -527,9 +531,16 @@ public abstract class AbstractHl7MllpCentralStationDriver implements CentralStat
     private final class Hl7MllpProtocolSession implements ProtocolSession {
         @Override
         public void onFrame(Frame frame, ProtocolSessionContext sessionContext) {
-            String er7 = normalizeEr7(new String(frame.copyPayload(), charset()));
+            byte[] payload = frame.copyPayload();
+            String er7 = normalizeEr7(new String(payload, charset()));
             String messageType = normalizeMessageType(er7).orElse("");
             String messageControlId = normalizeMessageControlId(er7).orElse("");
+
+            if (diagnosticLoggingEnabled()) {
+                log.info("HL7 MLLP frame decoded: driver={} ip={} payloadBytes={} msgType={} msgId={} obxCount={} rawHl7=\n{}",
+                    driverCode(), context.remoteIp(), payload.length, messageType, messageControlId,
+                    countObxSegments(er7), er7.replace("\r", "\n"));
+            }
 
             if (messageType == null || messageType.isBlank()) {
                 log.warn("Missing MSH-9 message type in HL7 payload: msgId={}", messageControlId);
@@ -548,7 +559,18 @@ public abstract class AbstractHl7MllpCentralStationDriver implements CentralStat
                 log.warn("HL7 processing error: {} msgType={} msgId={} driver={} ip={}",
                     e.toString(), messageType, messageControlId, driverCode(), context.remoteIp());
             } finally {
-                buildAck(messageControlId).ifPresent(bytes -> sessionContext.send(bytes, ackDelayMs()));
+                Optional<byte[]> ack = buildAck(messageControlId);
+                if (ack.isPresent()) {
+                    byte[] bytes = ack.get();
+                    if (diagnosticLoggingEnabled()) {
+                        log.info("HL7 ACK queued: driver={} ip={} msgId={} bytes={} delayMs={}",
+                            driverCode(), context.remoteIp(), messageControlId, bytes.length, ackDelayMs());
+                    }
+                    sessionContext.send(bytes, ackDelayMs());
+                } else if (diagnosticLoggingEnabled()) {
+                    log.info("HL7 ACK not sent: driver={} ip={} msgId={}",
+                        driverCode(), context.remoteIp(), messageControlId);
+                }
             }
         }
     }
