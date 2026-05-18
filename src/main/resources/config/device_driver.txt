@@ -13,6 +13,14 @@ config {
         monitoring_param_code: "nibp_d"
     }
     item {
+        ob_code: "MDC_PRESS_CUFF_SYS"
+        monitoring_param_code: "nibp_s"
+    }
+    item {
+        ob_code: "MDC_PRESS_CUFF_DIA"
+        monitoring_param_code: "nibp_d"
+    }
+    item {
         ob_code: "MDC_ECG_HEART_RATE"
         monitoring_param_code: "hr"
     }
