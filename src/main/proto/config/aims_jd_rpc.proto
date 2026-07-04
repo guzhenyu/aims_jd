@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package jingyi.devicehub;
+
+option java_package = "com.jingyicare.aims_jd.proto.rpc";
+option java_multiple_files = true;
+option java_outer_classname = "AimsJdRpcProto";
+
+message AtomicDeviceDataPB {
+    string param_code = 1;
+    string recorded_str = 2;
+}
+
+message AddDeviceDataReq {
+    int32 device_id = 1;
+    string dept_code = 2;
+    string recorded_at_iso8601 = 3;
+    repeated AtomicDeviceDataPB data = 4;
+    string driver_code = 5;
+    string connection_id = 6;
+}
+
+message AddDeviceDataResp {
+    int32 code = 1;
+    string message = 2;
+}
+
+service DeviceDataService {
+    rpc AddDeviceData(AddDeviceDataReq) returns (AddDeviceDataResp);
+}
