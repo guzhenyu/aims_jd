@@ -21,6 +21,22 @@ config {
         monitoring_param_code: "nibp_d"
     }
     item {
+        ob_code: "MDC_PRESS_CUFF_MEAN"
+        monitoring_param_code: "nibp_m"
+    }
+    item {
+        ob_code: "MDC_PRESS_BLD_SYS"
+        monitoring_param_code: "ibp_s"
+    }
+    item {
+        ob_code: "MDC_PRESS_BLD_DIA"
+        monitoring_param_code: "ibp_d"
+    }
+    item {
+        ob_code: "MDC_PRESS_BLD_MEAN"
+        monitoring_param_code: "ibp_m"
+    }
+    item {
         ob_code: "MDC_ECG_HEART_RATE"
         monitoring_param_code: "hr"
     }
